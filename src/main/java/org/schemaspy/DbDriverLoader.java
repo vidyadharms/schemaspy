@@ -18,6 +18,7 @@
  */
 package org.schemaspy;
 
+import org.apache.hadoop.security.UserGroupInformation;
 import org.schemaspy.model.ConnectionFailure;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +32,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.Driver;
+import java.sql.DriverManager;
 import java.util.*;
 
 /**
@@ -44,7 +46,24 @@ public class DbDriverLoader {
 
     public Connection getConnection(Config config, String connectionURL,
                                        String driverClass, String driverPath) throws IOException {
-
+    	
+    	String dbType=config.getDbType();
+    	String principalName = config.getDbProperties().getProperty("principalName", "");
+    	String keytabFilepath = config.getDbProperties().getProperty("keytabFilepath", "");;
+    	
+    	if(dbType.equalsIgnoreCase("hive-kerberos.properties"))
+    	{
+	    	LOGGER.debug("Calling custom code for Hive Kerberos.......");
+	    	
+	    	LOGGER.debug("getDescription: "+config.getDescription());
+	    	LOGGER.debug("getDbType: "+config.getDbType());
+	    	LOGGER.debug("getDb: "+config.getDb());
+	    	LOGGER.debug("getDriverPath: "+config.getDriverPath());
+	    	LOGGER.debug("driverClass: "+driverClass);
+	    	LOGGER.debug("driverPath: "+driverPath);
+	    	LOGGER.debug("connectionURL: "+connectionURL);
+    	}
+    	
         loadJDBCJars = config.isLoadJDBCJarsEnabled();
 
         Driver driver = getDriver(driverClass, driverPath);
@@ -57,9 +76,38 @@ public class DbDriverLoader {
             connectionProperties.put("password", config.getPassword());
         }
 
-        Connection connection;
+        Connection connection =null;
         try {
-            connection = driver.connect(connectionURL, connectionProperties);
+        	if(dbType.equalsIgnoreCase("hive-kerberos.properties"))
+        	{
+        		try {
+        			
+        			Class.forName(driverClass);
+
+        			org.apache.hadoop.conf.Configuration conf = new org.apache.hadoop.conf.Configuration();
+        			conf.set("hadoop.security.authentication", "Kerberos");
+        			UserGroupInformation.setConfiguration(conf);
+        			UserGroupInformation.loginUserFromKeytab(principalName, keytabFilepath);
+        			Class.forName("org.apache.hive.jdbc.HiveDriver");
+        			LOGGER.debug("getting connection for Hive URL");
+        			LOGGER.debug(connectionURL);
+        			connection = DriverManager.getConnection(connectionURL);
+        			LOGGER.debug("got connection");
+        			
+        		}  catch (ClassNotFoundException e) {
+        			e.printStackTrace();
+        			System.exit(1);
+        		}	catch (Exception e) {
+        			e.printStackTrace();
+        			System.exit(1);
+        		}
+        		
+        		LOGGER.debug("End custom code for Hive Kerberos.......");
+        	}
+        	else
+        	{
+        		connection = driver.connect(connectionURL, connectionProperties);
+        	}
             if (connection == null) {
                 System.err.println();
                 System.err.println("Cannot connect to this database URL:");
